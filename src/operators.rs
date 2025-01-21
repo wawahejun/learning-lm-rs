@@ -84,7 +84,7 @@ pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: 
         let rms = (sum_squares / last_dim_size as f32 + epsilon).sqrt();
         for j in 0..last_dim_size {
             let index = offset + j;
-            y.data_mut()[index] = x.data()[index] / rms * w.data()[j];
+            y.data_mut()[index] = x.data()[index] / rms * w.data()[j % last_dim_size];
         }
         offset += last_dim_size;
     }
