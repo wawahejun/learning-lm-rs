@@ -70,8 +70,26 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
     }
 }
 
+
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
-    todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
+    let x_shape = x.shape();
+    let last_dim_size = x_shape.last().unwrap();
+    let total_size = x.size();
+    let mut offset = 0;
+    while offset < total_size {
+        let mut sum_squares = 0.0;
+        for j in 0..last_dim_size {
+            let index = offset + j;
+            sum_squares += x.data()[index].powi(2);
+        }
+        let rms = (sum_squares / last_dim_size as f32 + epsilon).sqrt();
+        for j in 0..last_dim_size {
+            let index = offset + j;
+            // 修正w的索引，使其与x的最后一维对应
+            y.data_mut()[index] = x.data()[index] / rms * w.data()[j % last_dim_size];
+        }
+        offset += last_dim_size;
+    }
 }
 
 // y = silu(x) * y
