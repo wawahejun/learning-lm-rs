@@ -1,7 +1,6 @@
 use crate::tensor::Tensor;
 use rayon::prelude::*;
 
-
 // get (row) vectors from a 2D table given a list of indices
 pub fn gather(y: &mut Tensor<f32>, indices: &Tensor<u32>, table: &Tensor<f32>) {
     let length = indices.size();
@@ -72,7 +71,6 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
     }
 }
 
-
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
     // todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
     assert!(
@@ -118,19 +116,30 @@ pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: 
 // y = silu(x) * y
 // hint: this is an element-wise operation
 pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
-    let len = y.size();
-    assert!(len == x.size());
+    // let len = y.size();
+    // assert!(len == x.size());
 
-    let mut y_data = unsafe { y.data_mut() };
+    // let _y = unsafe { y.data_mut() };
+    // let _x = x.data();
+
+    assert!(
+        y.shape() == x.shape(),
+        "Input and output tensors must have the same shape"
+    );
+
+    let y_data = unsafe { y.data_mut() };
     let x_data = x.data();
 
-    for i in 0..len {
-        let sigmoid_x = 1.0 / (1.0 + (-x_data[i]).exp());
-        let silu_x = sigmoid_x * x_data[i];
-        y_data[i] = silu_x * y_data[i];
-    }
-}
+    y_data
+        .iter_mut()
+        .zip(x_data.iter())
+        .for_each(|(y_elem, &x_elem)| {
+            let x_sigmoid = 1.0 / (1.0 + (-x_elem).exp());
+            *y_elem *= x_sigmoid * x_elem;
+        });
 
+    // todo!("实现 silu，这里给了一些前期准备工作的提示，你可以参考")
+}
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
