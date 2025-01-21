@@ -1,6 +1,7 @@
 use crate::tensor::Tensor;
 use rayon::prelude::*;
 
+
 // get (row) vectors from a 2D table given a list of indices
 pub fn gather(y: &mut Tensor<f32>, indices: &Tensor<u32>, table: &Tensor<f32>) {
     let length = indices.size();
