@@ -72,23 +72,38 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
 
 
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
-    let x_shape = x.shape();
-    let last_dim_size = x_shape.last().unwrap();
-    let total_size = x.size();
-    let mut offset = 0;
-    while offset < total_size {
-        let mut sum_squares = 0.0;
-        for j in 0..last_dim_size {
-            let index = offset + j;
-            sum_squares += x.data()[index].powi(2);
-        }
-        let rms = (sum_squares / last_dim_size as f32 + epsilon).sqrt();
-        for j in 0..last_dim_size {
-            let index = offset + j;
-            // 修正w的索引，使其与x的最后一维对应
-            y.data_mut()[index] = x.data()[index] / rms * w.data()[j % last_dim_size];
-        }
-        offset += last_dim_size;
+    // 输入检查
+    assert!(
+        y.size() == x.size(),
+        "Input and output tensors must have the same size"
+    );
+    assert!(
+        w.shape().len() == 1,
+        "Weight tensor w must be 1 - dimensional"
+    );
+    assert!(
+        w.size() == x.shape().last().copied().unwrap_or(0),
+        "Weight tensor must match last dimension of the input tensor"
+    );
+
+    let x_data = x.data();
+    let w_data = w.data();
+    let last_dim = x.shape().last().copied().unwrap_or(0);
+    if last_dim == 0 {
+        return;
+    }
+
+    // 并行处理
+    unsafe {
+        y.data_mut()
+          .par_chunks_mut(last_dim)
+          .zip(x_data.par_chunks(last_dim))
+          .for_each(|(y_chunk, x_chunk)| {
+                let rms = (x_chunk.iter().map(|&val| val * val).sum::<f32>() / last_dim as f32 + epsilon).sqrt();
+                for (y_val, x_val, w_val) in y_chunk.iter_mut().zip(x_chunk).zip(w_data) {
+                    *y_val = x_val * w_val / rms;
+                }
+            });
     }
 }
 
