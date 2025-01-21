@@ -1,5 +1,4 @@
 use crate::tensor::Tensor;
-use rayon::prelude::*;
 
 // get (row) vectors from a 2D table given a list of indices
 pub fn gather(y: &mut Tensor<f32>, indices: &Tensor<u32>, table: &Tensor<f32>) {
@@ -72,49 +71,40 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
 }
 
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
-    // todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
-    assert!(
-        y.size() == x.size(),
-        "Input and output tensors must have the same size"
-    );
-
-    assert!(
-        w.shape().len() == 1,
-        "Weight tensor w must be 1-dimensional"
-    );
-
-    assert!(
-        w.size() == x.shape().last().copied().unwrap_or(0),
-        "Weight tensor must match last dimension of the input tensor"
-    );
+    let num_rows = x.shape()[0]; // 获取行数
+    let num_cols = x.shape()[1]; // 获取列数
 
     let x_data = x.data();
     let w_data = w.data();
+    let y_data = unsafe { y.data_mut() };
 
-    let last_dim = x.shape().last().copied().unwrap_or(0);
-    if last_dim == 0 {
-        return;
-    }
+    for row in 0..num_rows {
+        let start_index = row * num_cols;
+        let end_index = start_index + num_cols;
 
-    unsafe {
-        y.data_mut()
-            .par_chunks_mut(last_dim)
-            .zip(x_data.par_chunks(last_dim))
-            .for_each(|(y_slice, x_slice)| {
-                // Compute the RMS value for the current slice
-                let rms = (x_slice.iter().map(|&val| val * val).sum::<f32>() / last_dim as f32
-                    + epsilon)
-                    .sqrt();
+        // 计算当前行的平方和
+        let sum_of_squares: f32 = x_data[start_index..end_index]
+            .iter()
+            .map(|&value| value * value)
+            .sum();
 
-                for j in 0..last_dim {
-                    y_slice[j] = w_data[j] * x_slice[j] / rms;
-                }
-            });
+        // 计算当前行的 RMS
+        let rms = (sum_of_squares / num_cols as f32 + epsilon).sqrt();
+
+        // 归一化并应用权重
+        for col in 0..num_cols {
+            let index = start_index + col;
+            y_data[index] = w_data[col] * x_data[index] / rms;
+        }
     }
 }
 
 // y = silu(x) * y
 // hint: this is an element-wise operation
+pub fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
+
 pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
     // let len = y.size();
     // assert!(len == x.size());
@@ -122,50 +112,59 @@ pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
     // let _y = unsafe { y.data_mut() };
     // let _x = x.data();
 
-    assert!(
-        y.shape() == x.shape(),
-        "Input and output tensors must have the same shape"
-    );
-
-    let y_data = unsafe { y.data_mut() };
-    let x_data = x.data();
-
-    y_data
-        .iter_mut()
-        .zip(x_data.iter())
-        .for_each(|(y_elem, &x_elem)| {
-            let x_sigmoid = 1.0 / (1.0 + (-x_elem).exp());
-            *y_elem *= x_sigmoid * x_elem;
-        });
-
     // todo!("实现 silu，这里给了一些前期准备工作的提示，你可以参考")
+    let len = y.size();
+    assert_eq!(x.size(), len);
+
+    fn sigmoid(x: f32) -> f32 {
+        1.0 / (1.0 + (-x).exp())
+    }
+
+    let _x = x.data();
+    let silu_x = _x.iter().map(|&x| sigmoid(x) * x).collect::<Vec<_>>();
+    let mut idx = 0;
+    unsafe {
+        let mut _y = y.data_mut();
+        for elem in _y.iter_mut() {
+            *elem = *elem * silu_x[idx];
+            idx += 1;
+        }
+    }
 }
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
 pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
-    // todo!("实现 matmul_transb，计算前做一些必要的检查会帮助你后续调试");
-    let (a_row, a_col) = (a.shape()[0], a.shape()[1]);
-    let (b_row, b_col) = (b.shape()[0], b.shape()[1]);
-    let (c_row, c_col) = (c.shape()[0], c.shape()[1]);
-
-    assert!(a_col == b_col, "Inner dimensions of A and B must match");
-    assert!(
-        a_row == c_row && b_row == c_col,
-        "Output matrix C must have shape (a_row, b_row)"
-    );
+    let a_rows = a.shape()[0];
+    let a_cols = a.shape()[1];
+    let b_rows = b.shape()[0];
+    let b_cols = b.shape()[1];
+    let c_rows = c.shape()[0];
+    let c_cols = c.shape()[1];
 
     let a_data = a.data();
     let b_data = b.data();
     let c_data = unsafe { c.data_mut() };
 
-    for i in 0..c_row {
-        for j in 0..c_col {
+    //确保 B 的形状是 (n, k) 并在操作中被视为 (k, n)
+    assert_eq!(
+        a_cols, b_cols,
+        "A's columns must match B's columns (B's transposed row count)"
+    );
+    assert_eq!(c_rows, a_rows, "C's rows must match A's rows");
+    assert_eq!(
+        c_cols, b_rows,
+        "C's columns must match B's rows (B's transposed column count)"
+    );
+
+    for i in 0..a_rows {
+        for j in 0..b_rows {
             let mut sum = 0.0;
-            for k in 0..a_col {
-                sum += a_data[i * a_col + k] * b_data[j * b_col + k];
+            for k in 0..a_cols {
+                // 计算 A 的第 i 行与 B 的第 j 列的内积
+                sum += a_data[i * a_cols + k] * b_data[j * b_cols + k];
             }
-            c_data[i * c_col + j] = beta * c_data[i * c_col + j] + alpha * sum;
+            c_data[i * c_cols + j] = beta * c_data[i * c_cols + j] + alpha * sum;
         }
     }
 }
